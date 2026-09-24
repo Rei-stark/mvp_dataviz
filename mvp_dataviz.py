@@ -2,9 +2,14 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
+from sklearn.linear_model import Ridge
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 
 DATASETS_PATH = Path(__file__).parent / "datasets"
@@ -77,6 +82,14 @@ METRIC_DEFINITIONS = {
     "delay_days": "mediana de dias de atraso em relação à previsão",
     "is_late": "percentual de pedidos entregues após a previsão",
     "item_count": "quantidade média ou total de itens por pedido",
+}
+
+FORECAST_METRICS = {
+    "payment_value": ("Receita", "sum"),
+    "order_id": ("Pedidos", "count"),
+    "customer_unique_id": ("Clientes", "nunique"),
+    "delivery_days": ("Prazo de entrega", "mean"),
+    "review_score": ("Nota das avaliações", "mean"),
 }
 
 st.set_page_config(
@@ -217,6 +230,90 @@ def traduzir_tabela(data):
     if "Entrega atrasada" in translated.columns:
         translated["Entrega atrasada"] = translated["Entrega atrasada"].map({True: "Sim", False: "Não"})
     return translated
+
+
+def construir_serie_temporal(data, metric, aggregation):
+    temporal = data.copy()
+    temporal["periodo"] = pd.to_datetime(temporal["month"] + "-01")
+    grouped = temporal.groupby("periodo")
+    if aggregation == "count":
+        series = grouped["order_id"].nunique()
+    elif aggregation == "nunique":
+        series = grouped[metric].nunique()
+    elif aggregation == "mean":
+        series = grouped[metric].mean()
+    else:
+        series = grouped[metric].sum()
+    series = series.sort_index()
+    full_index = pd.date_range(series.index.min(), series.index.max(), freq="MS")
+    series = series.reindex(full_index)
+    series = series.fillna(0 if aggregation in {"sum", "count", "nunique"} else series.interpolate().bfill().ffill())
+    return series.rename("realizado").reset_index().rename(columns={"index": "periodo"})
+
+
+def features_temporais(dates, start_date):
+    date_series = pd.Series(pd.to_datetime(dates))
+    elapsed_months = ((date_series - start_date).dt.days / 30.4375).to_numpy()
+    month_number = date_series.dt.month.to_numpy()
+    return np.column_stack([
+        elapsed_months,
+        np.sin(2 * np.pi * month_number / 12),
+        np.cos(2 * np.pi * month_number / 12),
+    ])
+
+
+@st.cache_data(show_spinner="Treinando previsão ML...")
+def prever_serie_temporal(data, metric, aggregation, horizon):
+    history = construir_serie_temporal(data, metric, aggregation)
+    if len(history) < 6:
+        raise ValueError("São necessários pelo menos 6 meses de histórico para treinar a previsão.")
+
+    start_date = history["periodo"].min()
+    features = features_temporais(history["periodo"], start_date)
+    target = history["realizado"].to_numpy(dtype=float)
+    validation_size = min(3, max(1, len(history) // 4)) if len(history) >= 9 else 0
+    mae = None
+    if validation_size:
+        validation_model = make_pipeline(StandardScaler(), Ridge(alpha=10.0))
+        validation_model.fit(features[:-validation_size], target[:-validation_size])
+        validation_prediction = validation_model.predict(features[-validation_size:])
+        mae = float(np.mean(np.abs(target[-validation_size:] - validation_prediction)))
+
+    model = make_pipeline(StandardScaler(), Ridge(alpha=10.0))
+    model.fit(features, target)
+    future_dates = pd.date_range(
+        history["periodo"].max() + pd.offsets.MonthBegin(1), periods=horizon, freq="MS"
+    )
+    forecast = model.predict(features_temporais(future_dates, start_date))
+    if aggregation in {"sum", "count", "nunique"}:
+        forecast = np.maximum(forecast, 0)
+    if metric == "review_score":
+        forecast = np.clip(forecast, 1, 5)
+    if metric == "delivery_days":
+        forecast = np.maximum(forecast, 0)
+    forecast_frame = pd.DataFrame({"periodo": future_dates, "previsao": forecast})
+    return history, forecast_frame, mae
+
+
+def grafico_previsao(history, forecast, title, metric):
+    figure = go.Figure()
+    figure.add_trace(go.Scatter(
+        x=history["periodo"], y=history["realizado"], mode="lines+markers",
+        name="Realizado", line={"color": "#5de1c7", "width": 3},
+    ))
+    figure.add_trace(go.Scatter(
+        x=forecast["periodo"], y=forecast["previsao"], mode="lines+markers",
+        name="Previsão ML", line={"color": "#f0bb63", "width": 3, "dash": "dash"},
+    ))
+    figure.update_layout(
+        title=title,
+        xaxis_title="Mês",
+        yaxis_title=rotulo_coluna(metric),
+        hovermode="x unified",
+        height=480,
+        margin=dict(l=10, r=10, t=60, b=10),
+    )
+    return figure
 
 
 def get_openai_key():
@@ -496,8 +593,8 @@ kpi2.metric("Pedidos", f"{order_count:,}".replace(",", "."))
 kpi3.metric("Atraso logistico", percentual(late_rate), delta_color="inverse")
 kpi4.metric("Mediana de entrega", f"{avg_delivery:.1f} dias" if pd.notna(avg_delivery) else "n/a")
 
-executive_tab, revenue_tab, customer_tab, operations_tab, geo_tab, ai_tab = st.tabs([
-    "Pulso executivo", "Receita e mix", "Clientes", "Operações", "Geografia", "Generative BI",
+executive_tab, revenue_tab, customer_tab, operations_tab, geo_tab, prediction_tab, ai_tab = st.tabs([
+    "Pulso executivo", "Receita e mix", "Clientes", "Operações", "Geografia", "Previsões ML", "Generative BI",
 ])
 
 with executive_tab:
@@ -505,12 +602,22 @@ with executive_tab:
     monthly = filtered.groupby("month", as_index=False).agg(revenue=("payment_value", "sum"), orders=("order_id", "nunique"))
     trend_window_max = max(1, min(6, len(monthly)))
     trend_window = st.slider("Suavizacao da tendencia (meses)", 1, trend_window_max, 1, key="executive_trend_window")
+    show_revenue_forecast = st.checkbox("Mostrar previsão ML da receita", key="executive_revenue_forecast")
+    forecast_horizon = st.slider("Meses projetados", 1, 12, 6, key="executive_forecast_horizon")
     monthly["revenue_trend"] = monthly["revenue"].rolling(trend_window, min_periods=1).mean()
     left, right = st.columns([1.45, 1])
     with left:
         fig = px.area(monthly, x="month", y="revenue_trend", markers=True, title="Receita mensal ajustável", color_discrete_sequence=["#5de1c7"], labels={"month": "Mês", "revenue_trend": "Tendência da receita"})
         fig.update_layout(height=390, margin=dict(l=10, r=10, t=55, b=10), yaxis_title="Receita (R$)", xaxis_title=None)
         st.plotly_chart(fig, use_container_width=True)
+        if show_revenue_forecast:
+            try:
+                history, forecast, mae = prever_serie_temporal(filtered, "payment_value", "sum", forecast_horizon)
+                forecast_fig = grafico_previsao(history, forecast, "Receita realizada e previsão ML", "payment_value")
+                st.plotly_chart(forecast_fig, use_container_width=True)
+                st.caption(f"Modelo Ridge com sazonalidade mensal · MAE de validação: {moeda(mae) if mae is not None else 'histórico insuficiente para validação'}")
+            except ValueError as error:
+                st.warning(str(error))
     with right:
         status = filtered.groupby("order_status", as_index=False).size().sort_values("size", ascending=False)
         status_limit_max = max(1, len(status))
@@ -632,6 +739,55 @@ with geo_tab:
             use_container_width=True,
             config={"responsive": True, "displaylogo": False, "scrollZoom": True},
         )
+
+with prediction_tab:
+    st.subheader("Previsões ML")
+    st.write("Projete a próxima janela mensal com um modelo Ridge regularizado, tendência temporal e sazonalidade mensal.")
+    st.caption("A previsão é um cenário estatístico para apoio à decisão; não substitui avaliação de negócio ou planejamento operacional.")
+    prediction_metric = st.selectbox(
+        "Métrica a projetar",
+        list(FORECAST_METRICS),
+        format_func=lambda metric: FORECAST_METRICS[metric][0],
+        key="prediction_metric",
+    )
+    prediction_scope = st.selectbox(
+        "Recorte da previsão",
+        ["Total geral", "Estado do cliente", "Categoria"],
+        key="prediction_scope",
+    )
+    prediction_data = filtered
+    if prediction_scope == "Estado do cliente":
+        available_states = sorted(filtered["customer_state"].dropna().unique())
+        selected_state = st.selectbox("Estado", available_states, format_func=lambda state: STATE_LABELS.get(state, state), key="prediction_state")
+        prediction_data = filtered[filtered["customer_state"] == selected_state]
+    elif prediction_scope == "Categoria":
+        available_categories = sorted(filtered["category"].dropna().unique())
+        selected_category = st.selectbox("Categoria", available_categories, key="prediction_category")
+        prediction_data = filtered[filtered["category"] == selected_category]
+    prediction_horizon = st.slider("Horizonte de previsão (meses)", 1, 18, 6, key="prediction_horizon")
+    if st.button("Calcular previsão", type="primary", key="run_prediction"):
+        metric_aggregation = FORECAST_METRICS[prediction_metric][1]
+        try:
+            history, forecast, mae = prever_serie_temporal(
+                prediction_data, prediction_metric, metric_aggregation, prediction_horizon
+            )
+            label = FORECAST_METRICS[prediction_metric][0]
+            st.plotly_chart(
+                grafico_previsao(history, forecast, f"{label}: realizado versus previsão", prediction_metric),
+                use_container_width=True,
+            )
+            result_columns = st.columns(3)
+            result_columns[0].metric("Último realizado", f"{history['realizado'].iloc[-1]:,.1f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            result_columns[1].metric("Próximo mês", f"{forecast['previsao'].iloc[0]:,.1f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            result_columns[2].metric("MAE de validação", f"{mae:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".") if mae is not None else "n/a")
+            st.dataframe(
+                forecast.assign(periodo=forecast["periodo"].dt.strftime("%m/%Y"))
+                .rename(columns={"periodo": "Mês", "previsao": f"Previsão de {label}"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+        except ValueError as error:
+            st.warning(str(error))
 
 with ai_tab:
     st.subheader("Generative BI")
