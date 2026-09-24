@@ -145,7 +145,11 @@ def resumo_ia(data):
         "columns": data.columns.tolist(),
         "numeric_summary": data[numeric].describe().round(2).to_dict() if numeric else {},
         "dimension_values": {
-            column: data[column].value_counts().head(12).to_dict() for column in dimensions[:8]
+            column: {
+                str(value): int(count)
+                for value, count in data[column].astype("string").value_counts().head(12).items()
+            }
+            for column in dimensions[:8]
         },
     }
 
