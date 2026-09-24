@@ -418,6 +418,7 @@ categories = st.sidebar.multiselect(
     placeholder="Selecione uma ou mais opções",
 )
 top_n = st.sidebar.slider("Principais itens nas visões", min_value=5, max_value=20, value=10)
+st.sidebar.markdown("[Desenvolvido por Reinaldo Galvão](mailto:reinaldogalvao@gmail.com)")
 
 filtered = df[df["purchase_date"].between(date_range[0], date_range[1])].copy()
 if states:
