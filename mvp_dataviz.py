@@ -139,7 +139,10 @@ def get_openai_key():
 
 def resumo_ia(data):
     numeric = data.select_dtypes("number").columns.tolist()
-    dimensions = [column for column in data.columns if column not in numeric]
+    context_dimensions = [
+        "month", "customer_state", "customer_city", "category",
+        "payment_type", "order_status", "purchase_date",
+    ]
     return {
         "rows": len(data),
         "columns": data.columns.tolist(),
@@ -149,12 +152,47 @@ def resumo_ia(data):
                 str(value): int(count)
                 for value, count in data[column].astype("string").value_counts().head(12).items()
             }
-            for column in dimensions[:8]
+            for column in context_dimensions
+            if column in data.columns
         },
     }
 
 
+def normalizar_especificacao(specification, question):
+    normalized = dict(specification)
+    filters = dict(normalized.get("filters") or {})
+    question_lower = question.lower()
+    state_aliases = {
+        "minas gerais": "MG", "sao paulo": "SP", "são paulo": "SP",
+        "rio de janeiro": "RJ", "espirito santo": "ES", "espírito santo": "ES",
+        "parana": "PR", "paraná": "PR", "rio grande do sul": "RS",
+    }
+    for state_name, state_code in state_aliases.items():
+        if state_name in question_lower:
+            filters["customer_state"] = state_code
+            break
+    if isinstance(filters.get("customer_state"), str):
+        filters["customer_state"] = state_aliases.get(
+            filters["customer_state"].lower(), filters["customer_state"].upper()
+        )
+    normalized["filters"] = filters
+    return normalized
+
+
+def aplicar_filtros_especificacao(data, specification):
+    scoped = data
+    for column, value in (specification.get("filters") or {}).items():
+        if column not in scoped.columns:
+            continue
+        values = value if isinstance(value, list) else [value]
+        scoped = scoped[scoped[column].isin(values)]
+    if scoped.empty:
+        raise ValueError("A pergunta nao encontrou registros no recorte solicitado.")
+    return scoped
+
+
 def gerar_grafico_ia(data, specification):
+    data = aplicar_filtros_especificacao(data, specification)
     dimension = specification.get("dimension", "month")
     metric = specification.get("metric", "payment_value")
     chart_type = specification.get("chart_type", "bar")
@@ -194,8 +232,9 @@ def responder_ia(question, data):
     client = OpenAI(api_key=key)
     prompt = f"""
 Voce e o copiloto de analytics da NEXORA. Converta o pedido do gestor em uma especificacao de visualizacao.
-Responda SOMENTE JSON valido com as chaves: title, chart_type, dimension, metric, aggregation, limit, insight.
+Responda SOMENTE JSON valido com as chaves: title, chart_type, dimension, metric, aggregation, limit, filters, insight.
 chart_type deve ser bar, line ou pie. aggregation deve ser sum, mean ou count.
+filters deve ser um objeto com filtros exatos por coluna, usando os valores listados no contexto. Para perguntas sobre cidades de um estado, SEMPRE inclua o filtro customer_state com a sigla correta (ex.: Minas Gerais = MG).
 Use apenas colunas presentes no contexto. Escolha uma visualizacao executiva e explique o principal achado em insight.
 Pedido do gestor: {question}
 Contexto do modelo: {json.dumps(resumo_ia(data), default=str, ensure_ascii=False)}
@@ -210,7 +249,9 @@ Contexto do modelo: {json.dumps(resumo_ia(data), default=str, ensure_ascii=False
             ],
             temperature=0.2,
         )
-        specification = json.loads(response.choices[0].message.content)
+        specification = normalizar_especificacao(
+            json.loads(response.choices[0].message.content), question
+        )
         return specification, None
     except Exception as error:
         return None, f"Nao foi possivel consultar a IA: {error}"
@@ -265,13 +306,19 @@ executive_tab, revenue_tab, customer_tab, operations_tab, geo_tab, ai_tab = st.t
 with executive_tab:
     st.subheader("O pulso do negocio")
     monthly = filtered.groupby("month", as_index=False).agg(revenue=("payment_value", "sum"), orders=("order_id", "nunique"))
+    trend_window_max = max(1, min(6, len(monthly)))
+    trend_window = st.slider("Suavizacao da tendencia (meses)", 1, trend_window_max, 1, key="executive_trend_window")
+    monthly["revenue_trend"] = monthly["revenue"].rolling(trend_window, min_periods=1).mean()
     left, right = st.columns([1.45, 1])
     with left:
-        fig = px.area(monthly, x="month", y="revenue", markers=True, title="Receita mensal", color_discrete_sequence=["#5de1c7"])
+        fig = px.area(monthly, x="month", y="revenue_trend", markers=True, title="Receita mensal ajustavel", color_discrete_sequence=["#5de1c7"])
         fig.update_layout(height=390, margin=dict(l=10, r=10, t=55, b=10), yaxis_title="Receita (R$)", xaxis_title=None)
         st.plotly_chart(fig, use_container_width=True)
     with right:
         status = filtered.groupby("order_status", as_index=False).size().sort_values("size", ascending=False)
+        status_limit_max = max(1, len(status))
+        status_limit = st.slider("Status exibidos", 1, status_limit_max, min(4, status_limit_max), key="executive_status_limit")
+        status = status.head(status_limit)
         fig = px.pie(status, names="order_status", values="size", hole=.62, title="Mix de status", color_discrete_sequence=px.colors.qualitative.Safe)
         fig.update_layout(height=390, margin=dict(l=10, r=10, t=55, b=10), showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
@@ -281,15 +328,20 @@ with executive_tab:
 
 with revenue_tab:
     st.subheader("Receita, ticket e concentracao")
+    category_count = max(1, filtered["category"].nunique())
+    category_limit = st.slider("Categorias exibidas", 1, min(20, category_count), min(top_n, category_count), key="revenue_category_limit")
     left, right = st.columns(2)
     with left:
         category_revenue = filtered.groupby("category", as_index=False).agg(revenue=("payment_value", "sum"), orders=("order_id", "nunique"))
-        category_revenue = category_revenue.nlargest(top_n, "revenue")
+        category_revenue = category_revenue.nlargest(category_limit, "revenue")
         fig = px.bar(category_revenue.sort_values("revenue"), x="revenue", y="category", orientation="h", title="Receita por categoria", color="revenue", color_continuous_scale="Tealgrn")
         fig.update_layout(height=460, margin=dict(l=10, r=10, t=55, b=10), yaxis_title=None)
         st.plotly_chart(fig, use_container_width=True)
     with right:
         payment_mix = filtered.groupby("payment_type", as_index=False).agg(value=("payment_value", "sum"))
+        payment_limit_max = max(1, len(payment_mix))
+        payment_limit = st.slider("Formas de pagamento exibidas", 1, payment_limit_max, payment_limit_max, key="revenue_payment_limit")
+        payment_mix = payment_mix.nlargest(payment_limit, "value")
         fig = px.funnel(payment_mix.sort_values("value", ascending=False), x="value", y="payment_type", title="Arquitetura de pagamento")
         fig.update_layout(height=460, margin=dict(l=10, r=10, t=55, b=10))
         st.plotly_chart(fig, use_container_width=True)
@@ -301,13 +353,17 @@ with customer_tab:
         revenue=("payment_value", "sum"), customers=("customer_unique_id", "nunique"), orders=("order_id", "nunique"), review=("review_score", "mean")
     )
     customer_value["revenue_per_customer"] = customer_value["revenue"] / customer_value["customers"].clip(lower=1)
+    state_limit_max = max(1, len(customer_value))
+    state_limit = st.slider("Estados exibidos", 1, state_limit_max, min(top_n, state_limit_max), key="customer_state_limit")
+    customer_value = customer_value.nlargest(state_limit, "revenue")
     left, right = st.columns(2)
     with left:
         fig = px.scatter(customer_value, x="customers", y="revenue_per_customer", size="revenue", color="review", hover_name="customer_state", title="Valor por cliente e escala", color_continuous_scale="Viridis")
         fig.update_layout(height=430, margin=dict(l=10, r=10, t=55, b=10))
         st.plotly_chart(fig, use_container_width=True)
     with right:
-        review = filtered.groupby("review_score", as_index=False).size()
+        review_floor = st.slider("Nota minima exibida", 1, 5, 1, key="customer_review_floor")
+        review = filtered[filtered["review_score"] >= review_floor].groupby("review_score", as_index=False).size()
         fig = px.bar(review, x="review_score", y="size", title="Distribuicao de reviews", color="size", color_continuous_scale="Sunset")
         fig.update_layout(height=430, margin=dict(l=10, r=10, t=55, b=10), xaxis_title="Nota")
         st.plotly_chart(fig, use_container_width=True)
@@ -319,6 +375,9 @@ with operations_tab:
         delivery_days=("delivery_days", "median"), delay_days=("delay_days", "median"), late_rate=("is_late", "mean")
     )
     operations["late_rate"] *= 100
+    operations_window_max = max(1, len(operations))
+    operations_window = st.slider("Meses de operacao exibidos", 1, operations_window_max, min(12, operations_window_max), key="operations_month_limit")
+    operations = operations.tail(operations_window)
     left, right = st.columns(2)
     with left:
         fig = px.line(operations, x="month", y=["delivery_days", "delay_days"], markers=True, title="Tempo de entrega e atraso", color_discrete_sequence=["#5de1c7", "#f0bb63"])
@@ -326,6 +385,9 @@ with operations_tab:
         st.plotly_chart(fig, use_container_width=True)
     with right:
         carrier = filtered.groupby("order_status", as_index=False).agg(orders=("order_id", "nunique"), avg_review=("review_score", "mean"))
+        carrier_limit_max = max(1, len(carrier))
+        carrier_limit = st.slider("Status operacionais exibidos", 1, carrier_limit_max, carrier_limit_max, key="operations_status_limit")
+        carrier = carrier.nlargest(carrier_limit, "orders")
         fig = px.bar(carrier, x="order_status", y="orders", title="Volume por status", color="avg_review", color_continuous_scale="RdYlGn")
         fig.update_layout(height=430, margin=dict(l=10, r=10, t=55, b=10))
         st.plotly_chart(fig, use_container_width=True)
@@ -335,12 +397,15 @@ with geo_tab:
     st.subheader("Onde a operacao ganha escala")
     state_summary = filtered.groupby("customer_state", as_index=False).agg(revenue=("payment_value", "sum"), orders=("order_id", "nunique"), late_rate=("is_late", "mean"))
     state_summary["late_rate"] *= 100
-    fig = px.bar(state_summary.nlargest(top_n, "revenue").sort_values("revenue"), x="revenue", y="customer_state", orientation="h", color="late_rate", title="Receita por estado com atraso em destaque", color_continuous_scale="RdYlGn_r")
+    geo_state_count = max(1, len(state_summary))
+    geo_state_limit = st.slider("Estados no ranking", 1, min(27, geo_state_count), min(top_n, geo_state_count), key="geo_state_limit")
+    fig = px.bar(state_summary.nlargest(geo_state_limit, "revenue").sort_values("revenue"), x="revenue", y="customer_state", orientation="h", color="late_rate", title="Receita por estado com atraso em destaque", color_continuous_scale="RdYlGn_r")
     fig.update_layout(height=430, margin=dict(l=10, r=10, t=55, b=10), yaxis_title=None)
     st.plotly_chart(fig, use_container_width=True)
     map_data = filtered.dropna(subset=["customer_zip_code_prefix"]).copy()
-    if len(map_data) > 12000:
-        map_data = map_data.sample(12000, random_state=7)
+    map_points = st.slider("Pontos no mapa", 1000, 12000, 5000, step=1000, key="geo_map_points")
+    if len(map_data) > map_points:
+        map_data = map_data.sample(map_points, random_state=7)
     map_data = map_data.merge(carregar_geografia(), left_on="customer_zip_code_prefix", right_on="geolocation_zip_code_prefix", how="inner")
     if not map_data.empty:
         fig = px.scatter_map(map_data, lat="lat", lon="lon", size="payment_value", color="customer_state", hover_name="customer_city", zoom=3, height=520, map_style="carto-darkmatter", title="Origem geografica dos pedidos")
@@ -351,10 +416,7 @@ with ai_tab:
     st.subheader("Generative BI")
     st.write("Descreva a decisao que voce quer investigar. A IA transforma a pergunta em uma visualizacao usando apenas o modelo Olist carregado.")
     st.caption("Exemplos: 'Quais estados combinam maior receita e pior experiencia?' · 'Mostre a tendencia mensal de receita por categoria' · 'Compare o ticket medio por tipo de pagamento'.")
-    if get_openai_key():
-        st.success("Copiloto conectado. Sua chave e lida de OPENAI_API_KEY ou .streamlit/secrets.toml.")
-    else:
-        st.info("Copiloto em modo demonstracao. Configure OPENAI_API_KEY para gerar visualizacoes por linguagem natural.")
+    ai_limit = st.slider("Categorias ou cidades exibidas pela IA", 3, 30, 10, key="ai_chart_limit")
 
     question = st.chat_input("Pergunte algo sobre receita, clientes ou operacoes...")
     if question:
@@ -367,6 +429,7 @@ with ai_tab:
                 st.warning(error)
             else:
                 try:
+                    specification["limit"] = ai_limit
                     st.plotly_chart(gerar_grafico_ia(filtered, specification), use_container_width=True)
                     st.markdown(f'**Leitura da IA:** {specification.get("insight", "Visualizacao pronta para exploracao.")}')
                     with st.expander("Ver especificacao gerada"):
