@@ -1,6 +1,8 @@
 # NEXORA metrics | C-Level Analytics | Generative BI
 
-Piloto de uma plataforma de analytics executivo para transformar as tabelas publicas do Brazilian E-Commerce by Olist em decisoes de negocio. O projeto combina uma camada semantica de pedidos, dashboards setorizados e uma interface de Generative BI para solicitar novas visualizacoes em linguagem natural.
+Piloto de uma plataforma de analytics executivo para transformar as tabelas publicas do Brazilian E-commerce em decisoes de negocio. O projeto combina uma camada semantica de pedidos, dashboards setorizados e uma interface de Generative BI para solicitar novas visualizacoes em linguagem natural.
+
+**Periodo dos dados:** 04/09/2016 a 17/10/2018.
 
 ## O que existe no MVP
 
@@ -15,7 +17,7 @@ Piloto de uma plataforma de analytics executivo para transformar as tabelas publ
 
 ### Como a IA analisa os dados
 
-A Generative BI conhece o catalogo das tabelas Olist e o modelo semantico consolidado. Ela transforma a pergunta em um plano seguro com dimensao, detalhamento, metrica, agregacao e filtros; o Python executa esse plano sobre os dados reais antes de renderizar o grafico. As tabelas completas nao sao enviadas para a API e a IA nao executa codigo.
+A Generative BI conhece o catalogo das tabelas do Brazilian E-commerce e o modelo semantico consolidado. Ela transforma a pergunta em um plano seguro com dimensao, detalhamento, metrica, agregacao e filtros; o Python executa esse plano sobre os dados reais antes de renderizar o grafico. As tabelas completas nao sao enviadas para a API e a IA nao executa codigo.
 
 Ela suporta tendencias por categoria, comparacoes por estado ou cidade, receita, GMV, frete, ticket, contagem de pedidos, clientes, notas, prazo de entrega e percentual de atraso, com graficos de barras, linhas, areas, dispersao e pizza.
 
@@ -60,13 +62,13 @@ O arquivo de secrets e ignorado pelo Git. Sem a chave, o dashboard continua func
 
 ## Dados e modelo
 
-O app combina pedidos, clientes, itens, pagamentos, reviews, produtos, categorias traduzidas e geolocalizacao. O modelo final fica na granularidade de pedido e deriva GMV, frete, ticket, dias de entrega, atraso, review medio, mes, categoria dominante e estado do cliente.
+O app combina pedidos, clientes, itens, pagamentos, reviews, produtos, categorias traduzidas e geolocalizacao do Brazilian E-commerce. O modelo final fica na granularidade de pedido e deriva GMV, frete, ticket, dias de entrega, atraso, review medio, mes, categoria dominante e estado do cliente.
 
 ## Estrutura
 
 ```text
 mvp_dataviz/
-|-- datasets/                  # CSVs publicos da Olist
+|-- datasets/                  # CSVs publicos do Brazilian E-commerce
 |-- mvp_dataviz.py             # app, modelo semantico e copiloto
 |-- requirements.txt
 |-- README.md

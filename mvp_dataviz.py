@@ -14,6 +14,7 @@ from sklearn.preprocessing import StandardScaler
 
 DATASETS_PATH = Path(__file__).parent / "datasets"
 APP_TITLE = "NEXORA metrics | C-Level Analytics | Generative BI"
+DATA_SOURCE_NAME = "Brazilian E-commerce"
 
 COLUMN_LABELS = {
     "order_id": "ID do pedido", "customer_id": "ID do cliente", "customer_unique_id": "ID único do cliente",
@@ -60,15 +61,15 @@ CATEGORY_LABELS = {
 }
 
 DATASET_CATALOG = {
-    "olist_orders_dataset.csv": "Pedidos, status e datas de compra, aprovação e entrega",
-    "olist_customers_dataset.csv": "Clientes, cidades, estados e identificadores de recorrência",
-    "olist_order_items_dataset.csv": "Itens, produtos, vendedores, preços e fretes",
-    "olist_order_payments_dataset.csv": "Pagamentos, formas de pagamento, valores e parcelas",
-    "olist_order_reviews_dataset.csv": "Avaliações dos pedidos em escala de 1 a 5",
-    "olist_products_dataset.csv": "Produtos e categorias originais",
-    "olist_sellers_dataset.csv": "Vendedores, cidades e estados de origem",
-    "olist_geolocation_dataset.csv": "Coordenadas geográficas por CEP",
-    "product_category_name_translation.csv": "Tradução de categorias do catálogo",
+    "Pedidos": "Status e datas de compra, aprovação e entrega",
+    "Clientes": "Cidades, estados e identificadores de recorrência",
+    "Itens de pedidos": "Produtos, vendedores, preços e fretes",
+    "Pagamentos": "Formas de pagamento, valores e parcelas",
+    "Avaliações": "Notas dos pedidos em escala de 1 a 5",
+    "Produtos": "Produtos e categorias originais",
+    "Vendedores": "Cidades e estados de origem",
+    "Geolocalização": "Coordenadas geográficas por CEP",
+    "Categorias": "Tradução de categorias do catálogo",
 }
 
 METRIC_DEFINITIONS = {
@@ -120,8 +121,8 @@ st.markdown(
 )
 
 
-@st.cache_data(show_spinner="Construindo o modelo analitico Olist...")
-def carregar_modelo_olist():
+@st.cache_data(show_spinner="Construindo o modelo analítico Brazilian E-commerce...")
+def carregar_modelo_brazilian_ecommerce():
     def read(name, **kwargs):
         return pd.read_csv(DATASETS_PATH / name, **kwargs)
 
@@ -490,7 +491,7 @@ def especificacao_local(question):
         "aggregation": aggregation,
         "limit": 10,
         "filters": {},
-        "insight": "Visualização criada pelo interpretador local sobre os dados reais do modelo Olist.",
+        "insight": "Visualização criada pelo interpretador local sobre os dados reais do Brazilian E-commerce.",
     }, question)
 
 
@@ -549,7 +550,7 @@ def metricas_executivas(data):
     return total, order_count, late_rate, avg_delivery
 
 
-df = carregar_modelo_olist()
+df = carregar_modelo_brazilian_ecommerce()
 
 st.sidebar.markdown('<div class="eyebrow">NEXORA / PILOTO</div>', unsafe_allow_html=True)
 st.sidebar.title("Central de controle")
@@ -557,6 +558,7 @@ st.sidebar.caption("Analytics executivo com Generative BI")
 
 min_date = df["purchase_date"].min()
 max_date = df["purchase_date"].max()
+data_period = f"{min_date.strftime('%d/%m/%Y')} a {max_date.strftime('%d/%m/%Y')}"
 date_range = st.sidebar.slider("Janela de pedidos", min_date, max_date, (min_date, max_date), format="DD/MM/YYYY")
 states = st.sidebar.multiselect(
     "Estados", sorted(df["customer_state"].dropna().unique()), default=[],
@@ -583,8 +585,8 @@ if categories:
 
 st.markdown('<div class="eyebrow">NEXORA METRICS</div>', unsafe_allow_html=True)
 st.title(APP_TITLE)
-st.caption("Uma lente operacional para transformar o ecossistema Olist em decisões de negócio.")
-st.markdown(f'<p class="source-note">{len(filtered):,} pedidos no recorte atual · dados Olist · periodo {date_range[0].strftime("%d/%m/%Y")} a {date_range[1].strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
+st.caption("Uma lente operacional para transformar o Brazilian E-commerce em decisões de negócio.")
+st.markdown(f'<p class="source-note">{len(filtered):,} pedidos no recorte atual · {DATA_SOURCE_NAME} · período dos dados: {data_period} · janela filtrada: {date_range[0].strftime("%d/%m/%Y")} a {date_range[1].strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
 
 total_revenue, order_count, late_rate, avg_delivery = metricas_executivas(filtered)
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -791,9 +793,9 @@ with prediction_tab:
 
 with ai_tab:
     st.subheader("Generative BI")
-    st.write("Descreva a decisao que voce quer investigar. A IA transforma a pergunta em uma visualizacao usando apenas o modelo Olist carregado.")
+    st.write("Descreva a decisao que voce quer investigar. A IA transforma a pergunta em uma visualizacao usando apenas o modelo Brazilian E-commerce carregado.")
     st.caption("Exemplos: 'Quais estados combinam maior receita e pior experiencia?' · 'Mostre a tendencia mensal de receita por categoria' · 'Compare o ticket medio por tipo de pagamento'.")
-    st.info("A IA interpreta sua pergunta e cria um plano estruturado. O Python aplica os filtros e calcula o resultado diretamente sobre os dados Olist; a IA não executa código nem inventa linhas.")
+    st.info("A IA interpreta sua pergunta e cria um plano estruturado. O Python aplica os filtros e calcula o resultado diretamente sobre os dados Brazilian E-commerce; a IA não executa código nem inventa linhas.")
     with st.expander("Ver fontes e métricas disponíveis"):
         catalog_table = pd.DataFrame(
             [{"Tabela": table, "Conteúdo": description} for table, description in DATASET_CATALOG.items()]
@@ -822,4 +824,4 @@ with ai_tab:
                     st.error(f"A IA respondeu, mas a visualizacao nao pode ser montada: {error}")
 
 st.divider()
-st.caption("NEXORA metrics · Generative BI pilot · Modelo construido a partir das tabelas publicas do Brazilian E-Commerce by Olist")
+st.caption("NEXORA metrics · Generative BI pilot · Brazilian E-commerce · Dados de 04/09/2016 a 17/10/2018")
