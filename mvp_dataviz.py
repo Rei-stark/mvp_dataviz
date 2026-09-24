@@ -10,6 +10,50 @@ import streamlit as st
 DATASETS_PATH = Path(__file__).parent / "datasets"
 APP_TITLE = "NEXORA metrics | C-Level Analytics | Generative BI"
 
+COLUMN_LABELS = {
+    "order_id": "ID do pedido", "customer_id": "ID do cliente", "customer_unique_id": "ID único do cliente",
+    "customer_zip_code_prefix": "CEP do cliente", "customer_city": "Cidade do cliente", "customer_state": "Estado do cliente",
+    "order_status": "Status do pedido", "order_purchase_timestamp": "Data e hora da compra", "order_approved_at": "Data de aprovação",
+    "order_delivered_carrier_date": "Data de envio à transportadora", "order_delivered_customer_date": "Data de entrega",
+    "order_estimated_delivery_date": "Data estimada de entrega", "product_id": "ID do produto", "seller_id": "ID do vendedor",
+    "price": "Preço do item", "freight_value": "Valor do frete", "payment_value": "Valor pago", "payment_type": "Forma de pagamento",
+    "payment_sequential": "Sequência do pagamento", "payment_installments": "Parcelas", "installments": "Parcelas",
+    "review_score": "Nota da avaliação", "category": "Categoria", "item_count": "Itens por pedido", "seller_count": "Vendedores por pedido",
+    "gmv": "Receita de produtos", "purchase_date": "Data da compra", "month": "Mês", "purchase_week": "Semana da compra",
+    "delivery_days": "Prazo de entrega (dias)", "delay_days": "Atraso (dias)", "is_late": "Entrega atrasada",
+    "revenue": "Receita", "orders": "Pedidos", "customers": "Clientes", "value": "Valor", "size": "Quantidade",
+    "ticket_medio": "Ticket médio", "revenue_per_customer": "Receita por cliente", "review": "Nota média",
+    "avg_review": "Nota média", "late_rate": "Taxa de atraso", "revenue_trend": "Tendência da receita",
+}
+
+STATE_LABELS = {
+    "AC": "Acre", "AL": "Alagoas", "AP": "Amapá", "AM": "Amazonas", "BA": "Bahia", "CE": "Ceará",
+    "DF": "Distrito Federal", "ES": "Espírito Santo", "GO": "Goiás", "MA": "Maranhão", "MT": "Mato Grosso",
+    "MS": "Mato Grosso do Sul", "MG": "Minas Gerais", "PA": "Pará", "PB": "Paraíba", "PR": "Paraná",
+    "PE": "Pernambuco", "PI": "Piauí", "RJ": "Rio de Janeiro", "RN": "Rio Grande do Norte", "RS": "Rio Grande do Sul",
+    "RO": "Rondônia", "RR": "Roraima", "SC": "Santa Catarina", "SP": "São Paulo", "SE": "Sergipe", "TO": "Tocantins",
+    "Unknown": "Não informado",
+}
+
+STATUS_LABELS = {
+    "Delivered": "Entregue", "Shipped": "Enviado", "Canceled": "Cancelado", "Unavailable": "Indisponível",
+    "Invoiced": "Faturado", "Processing": "Em processamento", "Created": "Criado", "Approved": "Aprovado",
+}
+
+PAYMENT_LABELS = {
+    "credit_card": "Cartão de crédito", "boleto": "Boleto", "voucher": "Vale-presente",
+    "debit_card": "Cartão de débito", "not_defined": "Não definido",
+}
+
+CATEGORY_LABELS = {
+    "beleza saude": "Beleza e saúde", "cama mesa banho": "Cama, mesa e banho", "informatica acessorios": "Informática e acessórios",
+    "telefonia": "Telefonia", "moveis decoracao": "Móveis e decoração", "esporte lazer": "Esporte e lazer",
+    "utilidades domesticas": "Utilidades domésticas", "automotivo": "Automotivo", "brinquedos": "Brinquedos",
+    "perfumaria": "Perfumaria", "bebes": "Bebês", "eletronicos": "Eletrônicos", "ferramentas jardim": "Ferramentas e jardim",
+    "construcao ferramentas construcao": "Construção e ferramentas", "pet shop": "Pet shop", "papelaria": "Papelaria",
+    "relogios presentes": "Relógios e presentes", "artes": "Artes", "livros": "Livros", "musica": "Música",
+}
+
 st.set_page_config(
     page_title=APP_TITLE,
     page_icon="◈",
@@ -61,7 +105,7 @@ def carregar_modelo_olist():
     products = products.merge(
         category_lookup, left_on="product_category_name", right_on="category_original", how="left"
     )
-    products["category"] = products["category"].fillna(products["product_category_name"])
+    products["category"] = products["product_category_name"].fillna(products["category"])
     item_details = items.merge(products[["product_id", "category"]], on="product_id", how="left")
     item_rollup = item_details.groupby("order_id", as_index=False).agg(
         item_count=("order_item_id", "count"),
@@ -89,7 +133,7 @@ def carregar_modelo_olist():
     fact = fact.merge(item_rollup, on="order_id", how="left")
     fact = fact.merge(payment_rollup, on="order_id", how="left")
     fact = fact.merge(review_rollup, on="order_id", how="left")
-    fact["category"] = fact["category"].fillna("Unknown")
+    fact["category"] = fact["category"].fillna("nao_informado")
     fact["payment_value"] = fact["payment_value"].fillna(fact["gmv"] + fact["freight_value"])
     fact["gmv"] = fact["gmv"].fillna(0)
     fact["freight_value"] = fact["freight_value"].fillna(0)
@@ -105,9 +149,11 @@ def carregar_modelo_olist():
     ).dt.total_seconds() / 86400
     fact["is_late"] = fact["delay_days"].fillna(0) > 0
     fact["order_status"] = fact["order_status"].str.title()
+    fact["payment_type"] = fact["payment_type"].fillna("not_defined")
     fact["customer_state"] = fact["customer_state"].fillna("Unknown")
     fact["customer_city"] = fact["customer_city"].fillna("Unknown")
-    fact["category"] = fact["category"].str.replace("_", " ").str.title()
+    fact["category"] = fact["category"].fillna("nao_informado").str.replace("_", " ").str.lower()
+    fact["category"] = fact["category"].map(lambda value: CATEGORY_LABELS.get(value, value.capitalize()))
     return fact.sort_values("order_purchase_timestamp")
 
 
@@ -128,6 +174,24 @@ def moeda(value):
 
 def percentual(value):
     return f"{value:.1f}%".replace(".", ",")
+
+
+def rotulo_coluna(column):
+    return COLUMN_LABELS.get(column, str(column).replace("_", " ").capitalize())
+
+
+def traduzir_serie(series, labels):
+    return series.map(lambda value: labels.get(value, value))
+
+
+def traduzir_tabela(data):
+    translated = data.rename(columns={column: rotulo_coluna(column) for column in data.columns}).copy()
+    for column, labels in (("Estado do cliente", STATE_LABELS), ("Status do pedido", STATUS_LABELS), ("Forma de pagamento", PAYMENT_LABELS)):
+        if column in translated.columns:
+            translated[column] = traduzir_serie(translated[column], labels)
+    if "Entrega atrasada" in translated.columns:
+        translated["Entrega atrasada"] = translated["Entrega atrasada"].map({True: "Sim", False: "Não"})
+    return translated
 
 
 def get_openai_key():
@@ -208,14 +272,16 @@ def gerar_grafico_ia(data, specification):
     else:
         grouped = data.groupby(dimension, dropna=False)[metric].sum().reset_index(name="value")
     grouped = grouped.dropna().sort_values("value", ascending=False).head(limit)
+    dimension_label = rotulo_coluna(dimension)
+    grouped = grouped.rename(columns={dimension: dimension_label, "value": "Valor"})
     title = specification.get("title", "Visualizacao gerada pela IA")
 
     if chart_type == "line":
-        figure = px.line(grouped.sort_values(dimension), x=dimension, y="value", markers=True, title=title)
+        figure = px.line(grouped.sort_values(dimension_label), x=dimension_label, y="Valor", markers=True, title=title)
     elif chart_type == "pie":
-        figure = px.pie(grouped, names=dimension, values="value", hole=.48, title=title)
+        figure = px.pie(grouped, names=dimension_label, values="Valor", hole=.48, title=title)
     else:
-        figure = px.bar(grouped, x=dimension, y="value", title=title, color="value", color_continuous_scale="Tealgrn")
+        figure = px.bar(grouped, x=dimension_label, y="Valor", title=title, color="Valor", color_continuous_scale="Tealgrn")
     figure.update_layout(margin=dict(l=10, r=10, t=60, b=10), height=440)
     return figure
 
@@ -267,17 +333,26 @@ def metricas_executivas(data):
 
 df = carregar_modelo_olist()
 
-st.sidebar.markdown('<div class="eyebrow">NEXORA / PILOT</div>', unsafe_allow_html=True)
-st.sidebar.title("Control Tower")
-st.sidebar.caption("C-Level Analytics powered by Generative BI")
+st.sidebar.markdown('<div class="eyebrow">NEXORA / PILOTO</div>', unsafe_allow_html=True)
+st.sidebar.title("Central de controle")
+st.sidebar.caption("Analytics executivo com Generative BI")
 
 min_date = df["purchase_date"].min()
 max_date = df["purchase_date"].max()
 date_range = st.sidebar.slider("Janela de pedidos", min_date, max_date, (min_date, max_date), format="DD/MM/YYYY")
-states = st.sidebar.multiselect("Estados", sorted(df["customer_state"].dropna().unique()), default=[])
-statuses = st.sidebar.multiselect("Status do pedido", sorted(df["order_status"].dropna().unique()), default=[])
-categories = st.sidebar.multiselect("Categorias", sorted(df["category"].dropna().unique()), default=[])
-top_n = st.sidebar.slider("Top N nas visoes", min_value=5, max_value=20, value=10)
+states = st.sidebar.multiselect(
+    "Estados", sorted(df["customer_state"].dropna().unique()), default=[],
+    format_func=lambda state: STATE_LABELS.get(state, state), placeholder="Selecione uma ou mais opções",
+)
+statuses = st.sidebar.multiselect(
+    "Status do pedido", sorted(df["order_status"].dropna().unique()), default=[],
+    format_func=lambda status: STATUS_LABELS.get(status, status), placeholder="Selecione uma ou mais opções",
+)
+categories = st.sidebar.multiselect(
+    "Categorias", sorted(df["category"].dropna().unique()), default=[],
+    placeholder="Selecione uma ou mais opções",
+)
+top_n = st.sidebar.slider("Principais itens nas visões", min_value=5, max_value=20, value=10)
 
 filtered = df[df["purchase_date"].between(date_range[0], date_range[1])].copy()
 if states:
@@ -300,7 +375,7 @@ kpi3.metric("Atraso logistico", percentual(late_rate), delta_color="inverse")
 kpi4.metric("Mediana de entrega", f"{avg_delivery:.1f} dias" if pd.notna(avg_delivery) else "n/a")
 
 executive_tab, revenue_tab, customer_tab, operations_tab, geo_tab, ai_tab = st.tabs([
-    "Executive Pulse", "Receita & Mix", "Clientes", "Operacoes", "Geografia", "Generative BI",
+    "Pulso executivo", "Receita e mix", "Clientes", "Operações", "Geografia", "Generative BI",
 ])
 
 with executive_tab:
@@ -311,7 +386,7 @@ with executive_tab:
     monthly["revenue_trend"] = monthly["revenue"].rolling(trend_window, min_periods=1).mean()
     left, right = st.columns([1.45, 1])
     with left:
-        fig = px.area(monthly, x="month", y="revenue_trend", markers=True, title="Receita mensal ajustavel", color_discrete_sequence=["#5de1c7"])
+        fig = px.area(monthly, x="month", y="revenue_trend", markers=True, title="Receita mensal ajustável", color_discrete_sequence=["#5de1c7"], labels={"month": "Mês", "revenue_trend": "Tendência da receita"})
         fig.update_layout(height=390, margin=dict(l=10, r=10, t=55, b=10), yaxis_title="Receita (R$)", xaxis_title=None)
         st.plotly_chart(fig, use_container_width=True)
     with right:
@@ -319,7 +394,8 @@ with executive_tab:
         status_limit_max = max(1, len(status))
         status_limit = st.slider("Status exibidos", 1, status_limit_max, min(4, status_limit_max), key="executive_status_limit")
         status = status.head(status_limit)
-        fig = px.pie(status, names="order_status", values="size", hole=.62, title="Mix de status", color_discrete_sequence=px.colors.qualitative.Safe)
+        status["status_label"] = traduzir_serie(status["order_status"], STATUS_LABELS)
+        fig = px.pie(status, names="status_label", values="size", hole=.62, title="Mix de status", color_discrete_sequence=px.colors.qualitative.Safe, labels={"status_label": "Status do pedido", "size": "Quantidade"})
         fig.update_layout(height=390, margin=dict(l=10, r=10, t=55, b=10), showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
     top_category = filtered.groupby("category")["payment_value"].sum().nlargest(1)
@@ -334,7 +410,7 @@ with revenue_tab:
     with left:
         category_revenue = filtered.groupby("category", as_index=False).agg(revenue=("payment_value", "sum"), orders=("order_id", "nunique"))
         category_revenue = category_revenue.nlargest(category_limit, "revenue")
-        fig = px.bar(category_revenue.sort_values("revenue"), x="revenue", y="category", orientation="h", title="Receita por categoria", color="revenue", color_continuous_scale="Tealgrn")
+        fig = px.bar(category_revenue.sort_values("revenue"), x="revenue", y="category", orientation="h", title="Receita por categoria", color="revenue", color_continuous_scale="Tealgrn", labels={"revenue": "Receita (R$)", "category": "Categoria"})
         fig.update_layout(height=460, margin=dict(l=10, r=10, t=55, b=10), yaxis_title=None)
         st.plotly_chart(fig, use_container_width=True)
     with right:
@@ -342,10 +418,11 @@ with revenue_tab:
         payment_limit_max = max(1, len(payment_mix))
         payment_limit = st.slider("Formas de pagamento exibidas", 1, payment_limit_max, payment_limit_max, key="revenue_payment_limit")
         payment_mix = payment_mix.nlargest(payment_limit, "value")
-        fig = px.funnel(payment_mix.sort_values("value", ascending=False), x="value", y="payment_type", title="Arquitetura de pagamento")
+        payment_mix["payment_label"] = traduzir_serie(payment_mix["payment_type"], PAYMENT_LABELS)
+        fig = px.funnel(payment_mix.sort_values("value", ascending=False), x="value", y="payment_label", title="Arquitetura de pagamento", labels={"value": "Valor pago (R$)", "payment_label": "Forma de pagamento"})
         fig.update_layout(height=460, margin=dict(l=10, r=10, t=55, b=10))
         st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(category_revenue.assign(ticket_medio=category_revenue["revenue"] / category_revenue["orders"]), use_container_width=True, hide_index=True)
+    st.dataframe(traduzir_tabela(category_revenue.assign(ticket_medio=category_revenue["revenue"] / category_revenue["orders"])), use_container_width=True, hide_index=True)
 
 with customer_tab:
     st.subheader("Clientes e valor percebido")
@@ -358,16 +435,18 @@ with customer_tab:
     customer_value = customer_value.nlargest(state_limit, "revenue")
     left, right = st.columns(2)
     with left:
-        fig = px.scatter(customer_value, x="customers", y="revenue_per_customer", size="revenue", color="review", hover_name="customer_state", title="Valor por cliente e escala", color_continuous_scale="Viridis")
+        customer_plot = customer_value.copy()
+        customer_plot["state_label"] = traduzir_serie(customer_plot["customer_state"], STATE_LABELS)
+        fig = px.scatter(customer_plot, x="customers", y="revenue_per_customer", size="revenue", color="review", hover_name="state_label", title="Valor por cliente e escala", color_continuous_scale="Viridis", labels={"customers": "Clientes", "revenue_per_customer": "Receita por cliente (R$)", "revenue": "Receita (R$)", "review": "Nota média"})
         fig.update_layout(height=430, margin=dict(l=10, r=10, t=55, b=10))
         st.plotly_chart(fig, use_container_width=True)
     with right:
         review_floor = st.slider("Nota minima exibida", 1, 5, 1, key="customer_review_floor")
         review = filtered[filtered["review_score"] >= review_floor].groupby("review_score", as_index=False).size()
-        fig = px.bar(review, x="review_score", y="size", title="Distribuicao de reviews", color="size", color_continuous_scale="Sunset")
-        fig.update_layout(height=430, margin=dict(l=10, r=10, t=55, b=10), xaxis_title="Nota")
+        fig = px.bar(review, x="review_score", y="size", title="Distribuição de avaliações", color="size", color_continuous_scale="Sunset", labels={"review_score": "Nota da avaliação", "size": "Quantidade de avaliações"})
+        fig.update_layout(height=430, margin=dict(l=10, r=10, t=55, b=10), xaxis_title="Nota da avaliação")
         st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(customer_value.sort_values("revenue", ascending=False), use_container_width=True, hide_index=True)
+    st.dataframe(traduzir_tabela(customer_value.sort_values("revenue", ascending=False)), use_container_width=True, hide_index=True)
 
 with operations_tab:
     st.subheader("Operacoes e experiencia de entrega")
@@ -380,7 +459,7 @@ with operations_tab:
     operations = operations.tail(operations_window)
     left, right = st.columns(2)
     with left:
-        fig = px.line(operations, x="month", y=["delivery_days", "delay_days"], markers=True, title="Tempo de entrega e atraso", color_discrete_sequence=["#5de1c7", "#f0bb63"])
+        fig = px.line(operations, x="month", y=["delivery_days", "delay_days"], markers=True, title="Prazo de entrega e atraso", color_discrete_sequence=["#5de1c7", "#f0bb63"], labels={"month": "Mês", "delivery_days": "Prazo de entrega (dias)", "delay_days": "Atraso (dias)"})
         fig.update_layout(height=430, margin=dict(l=10, r=10, t=55, b=10), yaxis_title="Dias")
         st.plotly_chart(fig, use_container_width=True)
     with right:
@@ -388,10 +467,11 @@ with operations_tab:
         carrier_limit_max = max(1, len(carrier))
         carrier_limit = st.slider("Status operacionais exibidos", 1, carrier_limit_max, carrier_limit_max, key="operations_status_limit")
         carrier = carrier.nlargest(carrier_limit, "orders")
-        fig = px.bar(carrier, x="order_status", y="orders", title="Volume por status", color="avg_review", color_continuous_scale="RdYlGn")
+        carrier["status_label"] = traduzir_serie(carrier["order_status"], STATUS_LABELS)
+        fig = px.bar(carrier, x="status_label", y="orders", title="Volume por status", color="avg_review", color_continuous_scale="RdYlGn", labels={"status_label": "Status do pedido", "orders": "Pedidos", "avg_review": "Nota média"})
         fig.update_layout(height=430, margin=dict(l=10, r=10, t=55, b=10))
         st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(operations, use_container_width=True, hide_index=True)
+    st.dataframe(traduzir_tabela(operations), use_container_width=True, hide_index=True)
 
 with geo_tab:
     st.subheader("Onde a operacao ganha escala")
@@ -399,7 +479,8 @@ with geo_tab:
     state_summary["late_rate"] *= 100
     geo_state_count = max(1, len(state_summary))
     geo_state_limit = st.slider("Estados no ranking", 1, min(27, geo_state_count), min(top_n, geo_state_count), key="geo_state_limit")
-    fig = px.bar(state_summary.nlargest(geo_state_limit, "revenue").sort_values("revenue"), x="revenue", y="customer_state", orientation="h", color="late_rate", title="Receita por estado com atraso em destaque", color_continuous_scale="RdYlGn_r")
+    state_summary["state_label"] = traduzir_serie(state_summary["customer_state"], STATE_LABELS)
+    fig = px.bar(state_summary.nlargest(geo_state_limit, "revenue").sort_values("revenue"), x="revenue", y="state_label", orientation="h", color="late_rate", title="Receita por estado com atraso em destaque", color_continuous_scale="RdYlGn_r", labels={"revenue": "Receita (R$)", "state_label": "Estado", "late_rate": "Taxa de atraso"})
     fig.update_layout(height=430, margin=dict(l=10, r=10, t=55, b=10), yaxis_title=None)
     st.plotly_chart(fig, use_container_width=True)
     map_data = filtered.dropna(subset=["customer_zip_code_prefix"]).copy()
@@ -420,7 +501,8 @@ with geo_tab:
             center={"lat": -14.2, "lon": -51.9},
             height=map_height,
             map_style="carto-darkmatter",
-            title="Origem geografica dos pedidos",
+            title="Origem geográfica dos pedidos",
+            labels={"customer_state": "Estado", "customer_city": "Cidade"},
         )
         fig.update_layout(margin=dict(l=0, r=0, t=48, b=0), autosize=True)
         st.plotly_chart(
