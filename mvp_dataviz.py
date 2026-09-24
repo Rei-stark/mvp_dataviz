@@ -15,6 +15,7 @@ from sklearn.preprocessing import StandardScaler
 DATASETS_PATH = Path(__file__).parent / "datasets"
 APP_TITLE = "NEXORA metrics | C-Level Analytics | Generative BI"
 DATA_SOURCE_NAME = "Brazilian E-commerce"
+DATA_CUTOFF = pd.Timestamp("2018-09-30 23:59:59")
 
 COLUMN_LABELS = {
     "order_id": "ID do pedido", "customer_id": "ID do cliente", "customer_unique_id": "ID único do cliente",
@@ -130,6 +131,7 @@ def carregar_modelo_brazilian_ecommerce():
         "order_purchase_timestamp", "order_approved_at",
         "order_delivered_customer_date", "order_estimated_delivery_date",
     ])
+    orders = orders[orders["order_purchase_timestamp"] <= DATA_CUTOFF].copy()
     customers = read("olist_customers_dataset.csv")
     items = read("olist_order_items_dataset.csv")
     payments = read("olist_order_payments_dataset.csv")
@@ -558,7 +560,7 @@ st.sidebar.caption("Analytics executivo com Generative BI")
 
 min_date = df["purchase_date"].min()
 max_date = df["purchase_date"].max()
-data_period = f"{min_date.strftime('%d/%m/%Y')} a {max_date.strftime('%d/%m/%Y')}"
+data_period = f"{min_date.strftime('%d/%m/%Y')} a {DATA_CUTOFF.strftime('%d/%m/%Y')}"
 date_range = st.sidebar.slider("Janela de pedidos", min_date, max_date, (min_date, max_date), format="DD/MM/YYYY")
 states = st.sidebar.multiselect(
     "Estados", sorted(df["customer_state"].dropna().unique()), default=[],
@@ -824,4 +826,4 @@ with ai_tab:
                     st.error(f"A IA respondeu, mas a visualizacao nao pode ser montada: {error}")
 
 st.divider()
-st.caption("NEXORA metrics · Generative BI pilot · Brazilian E-commerce · Dados de 04/09/2016 a 17/10/2018")
+st.caption("NEXORA metrics · Generative BI pilot · Brazilian E-commerce · Dados de 04/09/2016 a 30/09/2018")

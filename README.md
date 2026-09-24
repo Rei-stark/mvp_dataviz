@@ -2,7 +2,7 @@
 
 Piloto de uma plataforma de analytics executivo para transformar as tabelas publicas do Brazilian E-commerce em decisoes de negocio. O projeto combina uma camada semantica de pedidos, dashboards setorizados e uma interface de Generative BI para solicitar novas visualizacoes em linguagem natural.
 
-**Periodo dos dados:** 04/09/2016 a 17/10/2018.
+**Periodo dos dados:** 04/09/2016 a 30/09/2018.
 
 ## O que existe no MVP
 
