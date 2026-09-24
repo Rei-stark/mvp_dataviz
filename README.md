@@ -44,7 +44,14 @@ Ou crie `.streamlit/secrets.toml`:
 OPENAI_API_KEY = "sua-chave"
 ```
 
-O arquivo de secrets e ignorado pelo Git. Sem a chave, o dashboard continua funcionando em modo demonstracao.
+O arquivo `.streamlit/secrets.toml.example` é apenas um modelo e não é carregado pelo Streamlit. Crie o arquivo real `secrets.toml` ou defina a variável no mesmo terminal que inicia a aplicação:
+
+```powershell
+$env:OPENAI_API_KEY = "sua-chave"
+python -m streamlit run mvp_dataviz.py
+```
+
+O arquivo de secrets e ignorado pelo Git. Sem a chave, o dashboard continua funcionando em modo local, mas não faz chamadas à OpenAI.
 
 ## Dados e modelo
 
