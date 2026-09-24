@@ -404,13 +404,30 @@ with geo_tab:
     st.plotly_chart(fig, use_container_width=True)
     map_data = filtered.dropna(subset=["customer_zip_code_prefix"]).copy()
     map_points = st.slider("Pontos no mapa", 1000, 12000, 5000, step=1000, key="geo_map_points")
+    map_height = st.slider("Altura do mapa", 500, 800, 640, step=20, key="geo_map_height")
     if len(map_data) > map_points:
         map_data = map_data.sample(map_points, random_state=7)
     map_data = map_data.merge(carregar_geografia(), left_on="customer_zip_code_prefix", right_on="geolocation_zip_code_prefix", how="inner")
     if not map_data.empty:
-        fig = px.scatter_map(map_data, lat="lat", lon="lon", size="payment_value", color="customer_state", hover_name="customer_city", zoom=3, height=520, map_style="carto-darkmatter", title="Origem geografica dos pedidos")
-        fig.update_layout(margin=dict(l=0, r=0, t=55, b=0))
-        st.plotly_chart(fig, use_container_width=True)
+        fig = px.scatter_map(
+            map_data,
+            lat="lat",
+            lon="lon",
+            size="payment_value",
+            color="customer_state",
+            hover_name="customer_city",
+            zoom=3.3,
+            center={"lat": -14.2, "lon": -51.9},
+            height=map_height,
+            map_style="carto-darkmatter",
+            title="Origem geografica dos pedidos",
+        )
+        fig.update_layout(margin=dict(l=0, r=0, t=48, b=0), autosize=True)
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={"responsive": True, "displaylogo": False, "scrollZoom": True},
+        )
 
 with ai_tab:
     st.subheader("Generative BI")
