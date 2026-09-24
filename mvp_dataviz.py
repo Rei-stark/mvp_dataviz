@@ -349,16 +349,64 @@ def gerar_grafico_ia(data, specification):
     return figure
 
 
+def especificacao_local(question):
+    question_lower = question.lower()
+    if "cidade" in question_lower:
+        dimension = "customer_city"
+    elif "estado" in question_lower or "uf" in question_lower:
+        dimension = "customer_state"
+    elif "categoria" in question_lower or "produto" in question_lower:
+        dimension = "category"
+    elif "pagamento" in question_lower:
+        dimension = "payment_type"
+    elif "status" in question_lower:
+        dimension = "order_status"
+    else:
+        dimension = "month"
+
+    breakdown = "category" if "por categoria" in question_lower else None
+    if "ticket" in question_lower:
+        metric, aggregation = "payment_value", "mean"
+    elif "frete" in question_lower:
+        metric, aggregation = "freight_value", "sum"
+    elif "atras" in question_lower:
+        metric, aggregation = "is_late", "mean"
+    elif "avalia" in question_lower or "nota" in question_lower:
+        metric, aggregation = "review_score", "mean"
+    elif "quantidade" in question_lower or "volume" in question_lower:
+        metric, aggregation = "order_id", "count"
+    else:
+        metric, aggregation = "payment_value", "sum"
+
+    if "tendencia" in question_lower or "evolucao" in question_lower or "mensal" in question_lower:
+        chart_type = "line"
+    elif "distribuicao" in question_lower or "mix" in question_lower:
+        chart_type = "pie"
+    else:
+        chart_type = "bar"
+    return normalizar_especificacao({
+        "title": question.strip().capitalize(),
+        "chart_type": chart_type,
+        "dimension": dimension,
+        "breakdown": breakdown,
+        "metric": metric,
+        "aggregation": aggregation,
+        "limit": 10,
+        "filters": {},
+        "insight": "Visualização criada pelo interpretador local sobre os dados reais do modelo Olist.",
+    }, question)
+
+
 def responder_ia(question, data):
     key = get_openai_key()
     if not key:
-        return None, "Configure OPENAI_API_KEY para ativar a Generative BI. A aplicacao ja esta pronta para receber a chave com seguranca."
+        return especificacao_local(question), "Chave OpenAI não encontrada. A visualização foi criada pelo modo local com os dados reais."
     try:
-        from openai import OpenAI
+        from openai import APIConnectionError, APIError, APITimeoutError, AuthenticationError, OpenAI, RateLimitError
     except ImportError:
-        return None, "Instale a dependencia openai com `pip install openai` para ativar a aba de IA."
+        return especificacao_local(question), "A SDK OpenAI não está instalada neste interpretador. A visualização foi criada pelo modo local com os dados reais."
 
-    client = OpenAI(api_key=key)
+    client = OpenAI(api_key=key, timeout=45.0, max_retries=2)
     prompt = f"""
 Voce e o copiloto de analytics da NEXORA. Converta o pedido do gestor em uma consulta visual estruturada sobre os dados reais.
 Responda SOMENTE JSON valido com as chaves: title, chart_type, dimension, breakdown, metric, aggregation, limit, filters, insight.
@@ -384,8 +432,16 @@ Contexto do modelo: {json.dumps(resumo_ia(data), default=str, ensure_ascii=False
             json.loads(response.choices[0].message.content), question
         )
         return specification, None
+    except AuthenticationError:
+        return especificacao_local(question), "A chave OpenAI foi recusada. A visualização foi criada pelo modo local com os dados reais."
+    except (APITimeoutError, APIConnectionError):
+        return especificacao_local(question), "A OpenAI não respondeu a tempo ou está inacessível. A visualização foi criada pelo modo local com os dados reais."
+    except RateLimitError:
+        return especificacao_local(question), "O limite da API OpenAI foi atingido. A visualização foi criada pelo modo local com os dados reais."
+    except APIError as error:
+        return especificacao_local(question), f"A API OpenAI retornou um erro ({error.__class__.__name__}). A visualização foi criada pelo modo local com os dados reais."
     except Exception as error:
-        return None, f"Nao foi possivel consultar a IA: {error}"
+        return especificacao_local(question), f"Não foi possível consultar a OpenAI ({error.__class__.__name__}). A visualização foi criada pelo modo local com os dados reais."
 
 
 def metricas_executivas(data):
@@ -599,7 +655,7 @@ with ai_tab:
                 specification, error = responder_ia(question, filtered)
             if error:
                 st.warning(error)
-            else:
+            if specification:
                 try:
                     specification["limit"] = ai_limit
                     st.plotly_chart(gerar_grafico_ia(filtered, specification), use_container_width=True)

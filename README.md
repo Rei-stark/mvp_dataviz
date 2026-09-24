@@ -24,7 +24,7 @@ Ela suporta tendencias por categoria, comparacoes por estado ou cidade, receita,
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-streamlit run mvp_dataviz.py
+python -m streamlit run mvp_dataviz.py
 ```
 
 A aplicacao carrega automaticamente as tabelas existentes em `datasets/`.
