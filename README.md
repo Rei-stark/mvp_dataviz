@@ -12,6 +12,12 @@ Piloto de uma plataforma de analytics executivo para transformar as tabelas publ
 - **Generative BI:** pergunta em linguagem natural convertida pela OpenAI em uma especificacao de grafico validada contra o modelo carregado.
 - Filtros globais por periodo, estado, status, categoria e Top N.
 
+### Como a IA analisa os dados
+
+A Generative BI conhece o catalogo das tabelas Olist e o modelo semantico consolidado. Ela transforma a pergunta em um plano seguro com dimensao, detalhamento, metrica, agregacao e filtros; o Python executa esse plano sobre os dados reais antes de renderizar o grafico. As tabelas completas nao sao enviadas para a API e a IA nao executa codigo.
+
+Ela suporta tendencias por categoria, comparacoes por estado ou cidade, receita, GMV, frete, ticket, contagem de pedidos, clientes, notas, prazo de entrega e percentual de atraso, com graficos de barras, linhas, areas, dispersao e pizza.
+
 ## Executar localmente
 
 ```powershell

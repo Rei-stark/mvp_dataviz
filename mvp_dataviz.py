@@ -54,6 +54,31 @@ CATEGORY_LABELS = {
     "relogios presentes": "Relógios e presentes", "artes": "Artes", "livros": "Livros", "musica": "Música",
 }
 
+DATASET_CATALOG = {
+    "olist_orders_dataset.csv": "Pedidos, status e datas de compra, aprovação e entrega",
+    "olist_customers_dataset.csv": "Clientes, cidades, estados e identificadores de recorrência",
+    "olist_order_items_dataset.csv": "Itens, produtos, vendedores, preços e fretes",
+    "olist_order_payments_dataset.csv": "Pagamentos, formas de pagamento, valores e parcelas",
+    "olist_order_reviews_dataset.csv": "Avaliações dos pedidos em escala de 1 a 5",
+    "olist_products_dataset.csv": "Produtos e categorias originais",
+    "olist_sellers_dataset.csv": "Vendedores, cidades e estados de origem",
+    "olist_geolocation_dataset.csv": "Coordenadas geográficas por CEP",
+    "product_category_name_translation.csv": "Tradução de categorias do catálogo",
+}
+
+METRIC_DEFINITIONS = {
+    "payment_value": "valor total pago pelo pedido em reais",
+    "gmv": "soma dos preços dos produtos em reais",
+    "freight_value": "soma do frete em reais",
+    "order_id": "quantidade de pedidos distintos",
+    "customer_unique_id": "quantidade de clientes distintos",
+    "review_score": "nota média das avaliações de 1 a 5",
+    "delivery_days": "mediana de dias entre compra e entrega",
+    "delay_days": "mediana de dias de atraso em relação à previsão",
+    "is_late": "percentual de pedidos entregues após a previsão",
+    "item_count": "quantidade média ou total de itens por pedido",
+}
+
 st.set_page_config(
     page_title=APP_TITLE,
     page_icon="◈",
@@ -210,6 +235,8 @@ def resumo_ia(data):
     return {
         "rows": len(data),
         "columns": data.columns.tolist(),
+        "catalogo_tabelas": DATASET_CATALOG,
+        "metricas_disponiveis": METRIC_DEFINITIONS,
         "numeric_summary": data[numeric].describe().round(2).to_dict() if numeric else {},
         "dimension_values": {
             column: {
@@ -239,6 +266,12 @@ def normalizar_especificacao(specification, question):
         filters["customer_state"] = state_aliases.get(
             filters["customer_state"].lower(), filters["customer_state"].upper()
         )
+    normalized["chart_type"] = normalized.get("chart_type", "bar").lower()
+    if normalized["chart_type"] not in {"bar", "line", "area", "pie", "scatter"}:
+        normalized["chart_type"] = "bar"
+    normalized["aggregation"] = normalized.get("aggregation", "sum").lower()
+    if normalized["aggregation"] not in {"sum", "mean", "count"}:
+        normalized["aggregation"] = "sum"
     normalized["filters"] = filters
     return normalized
 
@@ -258,30 +291,60 @@ def aplicar_filtros_especificacao(data, specification):
 def gerar_grafico_ia(data, specification):
     data = aplicar_filtros_especificacao(data, specification)
     dimension = specification.get("dimension", "month")
+    breakdown = specification.get("breakdown")
     metric = specification.get("metric", "payment_value")
     chart_type = specification.get("chart_type", "bar")
     aggregation = specification.get("aggregation", "sum")
     limit = max(3, min(int(specification.get("limit", 12)), 30))
     if dimension not in data.columns or metric not in data.columns:
         raise ValueError("A IA escolheu uma coluna que nao esta disponivel no modelo.")
+    if breakdown and breakdown not in data.columns:
+        breakdown = None
+
+    if breakdown and breakdown != dimension:
+        top_breakdowns = (
+            data.groupby(breakdown, dropna=False)[metric].sum()
+            .nlargest(limit)
+            .index
+        )
+        data = data[data[breakdown].isin(top_breakdowns)]
+    group_columns = [dimension] + ([breakdown] if breakdown and breakdown != dimension else [])
 
     if aggregation == "mean":
-        grouped = data.groupby(dimension, dropna=False)[metric].mean().reset_index(name="value")
+        grouped = data.groupby(group_columns, dropna=False)[metric].mean().reset_index(name="value")
     elif aggregation == "count":
-        grouped = data.groupby(dimension, dropna=False)[metric].count().reset_index(name="value")
+        grouped = data.groupby(group_columns, dropna=False).size().reset_index(name="value")
     else:
-        grouped = data.groupby(dimension, dropna=False)[metric].sum().reset_index(name="value")
-    grouped = grouped.dropna().sort_values("value", ascending=False).head(limit)
+        grouped = data.groupby(group_columns, dropna=False)[metric].sum().reset_index(name="value")
+    if metric == "is_late" and aggregation == "mean":
+        grouped["value"] *= 100
+    grouped = grouped.dropna(subset=[dimension, "value"])
+    if not breakdown:
+        grouped = grouped.sort_values("value", ascending=False).head(limit)
     dimension_label = rotulo_coluna(dimension)
-    grouped = grouped.rename(columns={dimension: dimension_label, "value": "Valor"})
+    breakdown_label = rotulo_coluna(breakdown) if breakdown else None
+    rename_map = {dimension: dimension_label, "value": rotulo_coluna(metric)}
+    if breakdown:
+        rename_map[breakdown] = breakdown_label
+    grouped = grouped.rename(columns=rename_map)
+    metric_label = rotulo_coluna(metric)
     title = specification.get("title", "Visualizacao gerada pela IA")
+    chart_labels = {dimension_label: dimension_label, metric_label: metric_label}
+    if breakdown_label:
+        chart_labels[breakdown_label] = breakdown_label
 
     if chart_type == "line":
-        figure = px.line(grouped.sort_values(dimension_label), x=dimension_label, y="Valor", markers=True, title=title)
+        figure = px.line(grouped.sort_values(dimension_label), x=dimension_label, y=metric_label, color=breakdown_label, markers=True, title=title, labels=chart_labels)
+    elif chart_type == "area":
+        figure = px.area(grouped.sort_values(dimension_label), x=dimension_label, y=metric_label, color=breakdown_label, markers=True, title=title, labels=chart_labels)
     elif chart_type == "pie":
-        figure = px.pie(grouped, names=dimension_label, values="Valor", hole=.48, title=title)
+        figure = px.pie(grouped, names=dimension_label, values=metric_label, hole=.48, title=title, labels=chart_labels)
+    elif chart_type == "scatter":
+        figure = px.scatter(grouped, x=dimension_label, y=metric_label, color=breakdown_label, title=title, labels=chart_labels)
     else:
-        figure = px.bar(grouped, x=dimension_label, y="Valor", title=title, color="Valor", color_continuous_scale="Tealgrn")
+        figure = px.bar(grouped, x=dimension_label, y=metric_label, color=breakdown_label, title=title, labels=chart_labels, color_continuous_scale="Tealgrn")
+    if metric == "is_late" and aggregation == "mean":
+        figure.update_yaxes(ticksuffix="%")
     figure.update_layout(margin=dict(l=10, r=10, t=60, b=10), height=440)
     return figure
 
@@ -297,11 +360,13 @@ def responder_ia(question, data):
 
     client = OpenAI(api_key=key)
     prompt = f"""
-Voce e o copiloto de analytics da NEXORA. Converta o pedido do gestor em uma especificacao de visualizacao.
-Responda SOMENTE JSON valido com as chaves: title, chart_type, dimension, metric, aggregation, limit, filters, insight.
-chart_type deve ser bar, line ou pie. aggregation deve ser sum, mean ou count.
-filters deve ser um objeto com filtros exatos por coluna, usando os valores listados no contexto. Para perguntas sobre cidades de um estado, SEMPRE inclua o filtro customer_state com a sigla correta (ex.: Minas Gerais = MG).
-Use apenas colunas presentes no contexto. Escolha uma visualizacao executiva e explique o principal achado em insight.
+Voce e o copiloto de analytics da NEXORA. Converta o pedido do gestor em uma consulta visual estruturada sobre os dados reais.
+Responda SOMENTE JSON valido com as chaves: title, chart_type, dimension, breakdown, metric, aggregation, limit, filters, insight.
+chart_type deve ser bar, line, area, pie ou scatter. aggregation deve ser sum, mean ou count.
+Use breakdown para uma segunda dimensao (ex.: receita mensal por categoria -> dimension=month e breakdown=category).
+metric deve usar uma coluna real ou uma metrica do dicionario. Para percentual de atraso, use metric=is_late e aggregation=mean.
+filters deve ser um objeto com filtros exatos por coluna, usando os valores listados no contexto. Para perguntas sobre cidades de um estado, SEMPRE inclua customer_state com a sigla correta (ex.: Minas Gerais = MG).
+Use apenas colunas presentes no contexto. Escolha a melhor visualizacao para a decisao e escreva um insight baseado no recorte.
 Pedido do gestor: {question}
 Contexto do modelo: {json.dumps(resumo_ia(data), default=str, ensure_ascii=False)}
 """
@@ -515,6 +580,13 @@ with ai_tab:
     st.subheader("Generative BI")
     st.write("Descreva a decisao que voce quer investigar. A IA transforma a pergunta em uma visualizacao usando apenas o modelo Olist carregado.")
     st.caption("Exemplos: 'Quais estados combinam maior receita e pior experiencia?' · 'Mostre a tendencia mensal de receita por categoria' · 'Compare o ticket medio por tipo de pagamento'.")
+    st.info("A IA interpreta sua pergunta e cria um plano estruturado. O Python aplica os filtros e calcula o resultado diretamente sobre os dados Olist; a IA não executa código nem inventa linhas.")
+    with st.expander("Ver fontes e métricas disponíveis"):
+        catalog_table = pd.DataFrame(
+            [{"Tabela": table, "Conteúdo": description} for table, description in DATASET_CATALOG.items()]
+        )
+        st.dataframe(catalog_table, use_container_width=True, hide_index=True)
+        st.caption("O modelo semântico consolida essas fontes na granularidade de pedido e deriva receita, ticket, prazo, atraso, avaliação, clientes, estados e categorias.")
     ai_limit = st.slider("Categorias ou cidades exibidas pela IA", 3, 30, 10, key="ai_chart_limit")
 
     question = st.chat_input("Pergunte algo sobre receita, clientes ou operacoes...")
